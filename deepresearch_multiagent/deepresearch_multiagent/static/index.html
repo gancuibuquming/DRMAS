@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeepResearch Multi-Agent System</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #172033; }
+    header { padding: 28px 36px; background: white; border-bottom: 1px solid #e7e9f0; }
+    main { max-width: 1100px; margin: 0 auto; padding: 28px; }
+    .card { background: white; border: 1px solid #e7e9f0; border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(20,30,50,0.04); margin-bottom: 18px; }
+    label { display: block; margin: 10px 0 6px; font-weight: 650; }
+    textarea, select { width: 100%; border: 1px solid #d8dceb; border-radius: 12px; padding: 12px; font-size: 15px; box-sizing: border-box; }
+    textarea { height: 110px; resize: vertical; }
+    button { margin-top: 14px; border: 0; border-radius: 999px; padding: 11px 18px; font-weight: 700; background: #172033; color: white; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .event { border-left: 4px solid #9aa4bc; background: #fafbff; padding: 10px 12px; border-radius: 10px; margin: 8px 0; }
+    .event strong { display: inline-block; min-width: 130px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #101828; color: #f9fafb; padding: 16px; border-radius: 14px; overflow: auto; }
+    .grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>DeepResearch Multi-Agent System</h1>
+  <p>Planner → Searcher → Reader → Analyst → Critic → Writer</p>
+</header>
+<main>
+  <section class="card">
+    <label>研究主题</label>
+    <textarea id="topic">RAG 系统中如何降低幻觉并提升答案可追溯性？</textarea>
+    <div class="grid">
+      <div>
+        <label>深度</label>
+        <select id="depth">
+          <option value="quick">quick</option>
+          <option value="standard" selected>standard</option>
+          <option value="deep">deep</option>
+        </select>
+      </div>
+      <div>
+        <label>语言</label>
+        <select id="language">
+          <option value="zh" selected>中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button id="start">开始研究</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>实时事件</h2>
+    <div id="events"></div>
+  </section>
+
+  <section class="card">
+    <h2>最终报告</h2>
+    <pre id="report">尚未生成</pre>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+function addEvent(evt) {
+  const div = document.createElement('div');
+  div.className = 'event';
+  div.innerHTML = `<strong>${evt.type}${evt.agent ? ' / ' + evt.agent : ''}</strong> ${evt.message || ''}`;
+  $('events').prepend(div);
+}
+
+$('start').onclick = async () => {
+  $('start').disabled = true;
+  $('events').innerHTML = '';
+  $('report').textContent = '运行中...';
+
+  const res = await fetch('/api/research/sessions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      topic: $('topic').value,
+      depth: $('depth').value,
+      language: $('language').value
+    })
+  });
+  const session = await res.json();
+  const es = new EventSource(session.stream_url);
+
+  const types = ['session_started','agent_started','agent_message','agent_finished','session_completed','session_failed','session_busy'];
+  for (const type of types) {
+    es.addEventListener(type, (message) => {
+      const evt = JSON.parse(message.data);
+      addEvent(evt);
+      if (evt.data && evt.data.final_report) {
+        $('report').textContent = evt.data.final_report;
+      }
+      if (evt.type === 'session_completed' || evt.type === 'session_failed') {
+        es.close();
+        $('start').disabled = false;
+        fetch('/api/research/sessions/' + session.session_id)
+          .then(r => r.json())
+          .then(data => { if (data.final_report) $('report').textContent = data.final_report; });
+      }
+    });
+  }
+
+  es.onerror = () => {
+    addEvent({type: 'sse_error', message: 'SSE 连接异常'});
+    es.close();
+    $('start').disabled = false;
+  };
+};
+</script>
+</body>
+</html>
